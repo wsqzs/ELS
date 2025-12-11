@@ -1,9 +1,9 @@
+import os
 import requests
-import json
+from openai import OpenAI
 
 # 1. 定义调用本地小模型的函数 (通过 Ollama API)
-def clean_error_log_with_slm(raw_log):
-    url = "http://localhost:11434/api/generate"
+def clean_error_log_with_slm(raw_log, url="http://localhost:11434/api/generate", model="qwen2.5-coder:1.5b", timeout=15):
     
     # 专门为提取关键信息设计的 Prompt
     prompt = f"""
@@ -20,32 +20,59 @@ def clean_error_log_with_slm(raw_log):
     """
     
     data = {
-        "model": "qwen2.5-coder:1.5b", # 使用超轻量模型
+        "model": model,  # 使用超轻量模型
         "prompt": prompt,
-        "stream": False
+        "stream": False,
     }
-    
-    response = requests.post(url, json=data)
-    return response.json()['response']
 
-# 2. 定义调用云端大模型的函数 (模拟)
-def ask_expert_llm(user_code, error_summary):
-    # 这里通常调用 OpenAI 或 Claude 的 SDK
-    # 为了演示，我们打印出最终发送给大模型的 Prompt
-    final_prompt = f"""
+    try:
+        response = requests.post(url, json=data, timeout=timeout)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        return f"本地清洗失败: {exc}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return "本地清洗失败: 返回内容不是 JSON"
+
+    return payload.get("response", "本地清洗失败: 返回缺少 response 字段")
+
+# 2. 定义调用云端大模型的函数 (OpenAI 示例)
+def ask_expert_llm(user_code, error_summary, model="gpt-4.1-mini", timeout=20):
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return "云端调用失败: 缺少环境变量 OPENAI_API_KEY"
+
+    prompt = f"""
     我遇到一个报错，请帮我修复。
-    
+
     【我的代码】：
     {user_code}
-    
+
     【报错关键信息】(由本地助手提取)：
     {error_summary}
-    
+
     请分析原因并给出修改后的代码。
     """
-    print("------ 发送给云端大模型的 Prompt ------")
-    print(final_prompt)
-    print("---------------------------------------")
+
+    client = OpenAI(api_key=api_key)
+
+    try:
+        resp = client.responses.create(
+            model=model,
+            input=[{"role": "user", "content": prompt}],
+            max_output_tokens=800,
+            temperature=0.3,
+            timeout=timeout,
+        )
+    except Exception as exc:  # SDK 抛出的网络/鉴权/配额等错误
+        return f"云端调用失败: {exc}"
+
+    try:
+        return resp.output_text
+    except Exception:
+        return "云端调用失败: 返回内容无法解析"
 
 # --- 模拟运行 ---
 if __name__ == "__main__":
@@ -69,4 +96,6 @@ if __name__ == "__main__":
     summary = clean_error_log_with_slm(long_noisy_log)
     print(f"清洗结果：\n{summary}\n")
     
-    ask_expert_llm(user_source_code, summary)
+    cloud_result = ask_expert_llm(user_source_code, summary)
+    print("------ 云端回答 ------")
+    print(cloud_result)
