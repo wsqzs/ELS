@@ -38,11 +38,11 @@ def clean_error_log_with_slm(raw_log, url="http://localhost:11434/api/generate",
 
     return payload.get("response", "本地清洗失败: 返回缺少 response 字段")
 
-# 2. 定义调用云端大模型的函数 (OpenAI 示例)
-def ask_expert_llm(user_code, error_summary, model="gpt-4.1-mini", timeout=20):
-    api_key = os.environ.get("OPENAI_API_KEY")
+# 2. 定义调用云端大模型的函数 (DeepSeek 示例)
+def ask_expert_llm(user_code, error_summary, model="deepseek-chat", timeout=20):
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
-        return "云端调用失败: 缺少环境变量 OPENAI_API_KEY"
+        return "云端调用失败: 缺少环境变量 DEEPSEEK_API_KEY"
 
     prompt = f"""
     我遇到一个报错，请帮我修复。
@@ -56,13 +56,13 @@ def ask_expert_llm(user_code, error_summary, model="gpt-4.1-mini", timeout=20):
     请分析原因并给出修改后的代码。
     """
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
     try:
-        resp = client.responses.create(
+        resp = client.chat.completions.create(
             model=model,
-            input=[{"role": "user", "content": prompt}],
-            max_output_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=800,
             temperature=0.3,
             timeout=timeout,
         )
@@ -70,7 +70,7 @@ def ask_expert_llm(user_code, error_summary, model="gpt-4.1-mini", timeout=20):
         return f"云端调用失败: {exc}"
 
     try:
-        return resp.output_text
+        return resp.choices[0].message.content
     except Exception:
         return "云端调用失败: 返回内容无法解析"
 
