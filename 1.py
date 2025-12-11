@@ -1,5 +1,7 @@
 import os
+import time
 import requests
+from dotenv import load_dotenv
 from openai import OpenAI
 
 # 1. 定义调用本地小模型的函数 (通过 Ollama API)
@@ -39,7 +41,8 @@ def clean_error_log_with_slm(raw_log, url="http://localhost:11434/api/generate",
     return payload.get("response", "本地清洗失败: 返回缺少 response 字段")
 
 # 2. 定义调用云端大模型的函数 (DeepSeek 示例)
-def ask_expert_llm(user_code, error_summary, model="deepseek-chat", timeout=20):
+def ask_expert_llm(user_code, error_summary, model="deepseek-chat", timeout=20, max_retries=2, retry_delay=2):
+    load_dotenv()  # 从 .env 读取环境变量
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         return "云端调用失败: 缺少环境变量 DEEPSEEK_API_KEY"
@@ -58,21 +61,23 @@ def ask_expert_llm(user_code, error_summary, model="deepseek-chat", timeout=20):
 
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=800,
-            temperature=0.3,
-            timeout=timeout,
-        )
-    except Exception as exc:  # SDK 抛出的网络/鉴权/配额等错误
-        return f"云端调用失败: {exc}"
-
-    try:
-        return resp.choices[0].message.content
-    except Exception:
-        return "云端调用失败: 返回内容无法解析"
+    last_err = None
+    for attempt in range(1, max_retries + 2):  # 初始尝试 + 重试次数
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.3,
+                timeout=timeout,
+            )
+            return resp.choices[0].message.content
+        except Exception as exc:  # SDK 抛出的网络/鉴权/配额等错误
+            last_err = exc
+            if attempt <= max_retries:
+                time.sleep(retry_delay)
+            else:
+                return f"云端调用失败: {exc}"
 
 # --- 模拟运行 ---
 if __name__ == "__main__":
